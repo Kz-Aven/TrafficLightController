@@ -1,0 +1,13 @@
+# 构建产物
+.build/
+dist/
+*.app
+*.o
+
+# 系统文件
+.DS_Store
+
+# 编辑器
+*.swp
+.idea/
+.vscode/
