@@ -5,6 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
+# 当前机器的 Command Line Tools 可能与 macOS SDK 版本不匹配；优先使用完整 Xcode。
+if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app/Contents/Developer ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+
 CONFIG="release"
 [[ "${1:-}" == "--debug" ]] && CONFIG="debug"
 
@@ -26,7 +31,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN_DIR/TrafficLight" "$APP/Contents/MacOS/TrafficLight"
 cp "$BIN_DIR/TrafficLightCLI" "$APP/Contents/Resources/trafficlight"
-chmod +x "$APP/Contents/Resources/trafficlight"
+cp "$ROOT/scripts/trafficlight-run" "$APP/Contents/Resources/trafficlight-run"
+cp "$ROOT/scripts/trafficlight-codex-hook" "$APP/Contents/Resources/trafficlight-codex-hook"
+cp "$ROOT/scripts/trafficlight-workbuddy-hook" "$APP/Contents/Resources/trafficlight-workbuddy-hook"
+cp "$ROOT/mcp/trafficlight_mcp.py" "$APP/Contents/Resources/trafficlight-mcp"
+chmod +x "$APP/Contents/Resources/trafficlight" "$APP/Contents/Resources/trafficlight-run" "$APP/Contents/Resources/trafficlight-codex-hook" "$APP/Contents/Resources/trafficlight-workbuddy-hook" "$APP/Contents/Resources/trafficlight-mcp"
 cp app/Sources/TrafficLight/Resources/red.png \
    app/Sources/TrafficLight/Resources/yellow.png \
    app/Sources/TrafficLight/Resources/green.png \
@@ -69,7 +78,11 @@ codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 || true
 
 # 6. CLI 也放一份到 dist 便于直接测试
 cp "$BIN_DIR/TrafficLightCLI" "$ROOT/dist/trafficlight"
-chmod +x "$ROOT/dist/trafficlight"
+cp "$ROOT/scripts/trafficlight-run" "$ROOT/dist/trafficlight-run"
+cp "$ROOT/scripts/trafficlight-codex-hook" "$ROOT/dist/trafficlight-codex-hook"
+cp "$ROOT/scripts/trafficlight-workbuddy-hook" "$ROOT/dist/trafficlight-workbuddy-hook"
+cp "$ROOT/mcp/trafficlight_mcp.py" "$ROOT/dist/trafficlight-mcp"
+chmod +x "$ROOT/dist/trafficlight" "$ROOT/dist/trafficlight-run" "$ROOT/dist/trafficlight-codex-hook" "$ROOT/dist/trafficlight-workbuddy-hook" "$ROOT/dist/trafficlight-mcp"
 
 echo ""
 echo "✅ 构建完成"

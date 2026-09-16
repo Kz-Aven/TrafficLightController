@@ -1,6 +1,6 @@
 ---
 name: traffic-light-controller
-description: 通过 trafficlight CLI 控制 Mac 桌面红绿灯，红色表示空闲、橙色表示工作中、绿色表示任务完成。当 Agent 需要可视化当前状态，或用户要求控制红绿灯时使用。Agent 应调用 start、heartbeat、done、idle、ack 等任务生命周期事件，而不是直接设置颜色。
+description: 通过 TrafficLightController 显示本地 Agent 状态。优先使用宿主 Hook 或 trafficlight-run；否则调用 MCP 或 CLI 生命周期事件。
 ---
 
 # TrafficLightController
@@ -13,7 +13,7 @@ description: 通过 trafficlight CLI 控制 Mac 桌面红绿灯，红色表示�
 - **橙色**：工作中，有任务正在执行
 - **绿色**：任务刚完成，结果待查看
 
-Agent 不应直接设置红/绿/橙，而应发送**任务生命周期事件**。红绿灯 App 内部根据事件自动计算显示状态。
+优先级：宿主 Hook > `trafficlight-run` 包装器 > MCP > 本 Skill 的显式 CLI 调用。Agent 不应直接设置红/绿/橙。
 
 ---
 
@@ -22,6 +22,7 @@ Agent 不应直接设置红/绿/橙，而应发送**任务生命周期事件**�
 - Mac 桌面已安装并运行 `TrafficLight` App。
 - 终端可执行 `trafficlight` 命令。
 - Agent 能执行 shell 命令。
+- 执行环境必须允许连接本地 Unix socket。若命令返回 `permission-denied`，说明当前 Agent 沙箱无法访问 App；应改由允许本地 socket 的宿主执行，或通过宿主侧 MCP 代理调用，不能把它当作 App 未启动后反复重试。
 
 ---
 
@@ -242,4 +243,3 @@ trafficlight done --id "task-002" --result success
 - 任务 ID 必须唯一，建议使用 `uuidgen` 或时间戳。
 - 若 CLI 返回错误，Agent 应记录日志并尝试 `trafficlight reset` 恢复。
 - 此 Skill 只定义 Agent 侧行为，红绿灯 App 负责状态机、超时、多任务聚合和显示。
-

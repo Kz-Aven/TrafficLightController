@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Codex Hook adapter for TrafficLightController.
+
+Reads a Codex Hook event from stdin and reports the matching turn lifecycle to
+the local TrafficLight CLI. Hook failures are intentionally ignored so a
+missing status-light app can never interrupt Codex.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def task_id(event):
+    session_id = event.get("session_id", "unknown-session")
+    turn_id = event.get("turn_id", "session")
+    agent = "".join(
+        character for character in os.environ.get("TRAFFICLIGHT_AGENT_NAME", "Codex").lower()
+        if character.isalnum() or character in "-_"
+    ) or "agent"
+    return f"{agent}:{session_id}:{turn_id}"
+
+
+def trafficlight(*arguments):
+    bundled_binary = Path(__file__).resolve().with_name("trafficlight")
+    binary = (
+        os.environ.get("TRAFFICLIGHT_BIN")
+        or shutil.which("trafficlight")
+        or (str(bundled_binary) if bundled_binary.is_file() else None)
+    )
+    if binary is None:
+        return
+    try:
+        subprocess.run(
+            [binary, *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def main():
+    try:
+        event = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        return
+
+    event_name = event.get("hook_event_name")
+    identifier = task_id(event)
+    agent_name = os.environ.get("TRAFFICLIGHT_AGENT_NAME", "Codex")
+
+    if event_name == "UserPromptSubmit":
+        trafficlight("start", "--id", identifier, "--name", agent_name)
+    elif event_name == "PostToolUse":
+        trafficlight("heartbeat", "--id", identifier)
+    elif event_name == "Stop":
+        trafficlight("done", "--id", identifier, "--result", "success")
+    elif event_name in {"Interrupt", "SessionEnd"}:
+        trafficlight("idle", "--reason", f"{agent_name} 任务已取消或会话已结束")
+
+
+if __name__ == "__main__":
+    main()

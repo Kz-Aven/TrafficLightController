@@ -1,0 +1,67 @@
+#!/bin/bash
+# Supervise any local Agent command and mirror its process lifecycle to TrafficLight.
+set -euo pipefail
+
+usage() {
+    echo "用法: trafficlight-run [--id ID] [--name NAME] [--heartbeat 秒] -- <命令> [参数...]" >&2
+    exit 2
+}
+
+task_id=""
+task_name="本地 Agent"
+heartbeat_seconds=20
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --id) task_id="${2:-}"; shift 2 ;;
+        --name) task_name="${2:-}"; shift 2 ;;
+        --heartbeat) heartbeat_seconds="${2:-}"; shift 2 ;;
+        --) shift; break ;;
+        *) usage ;;
+    esac
+done
+[[ $# -gt 0 ]] || usage
+[[ -n "$task_id" ]] || task_id="run-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+[[ "$heartbeat_seconds" =~ ^[1-9][0-9]*$ ]] || usage
+
+trafficlight_bin="${TRAFFICLIGHT_BIN:-trafficlight}"
+"$trafficlight_bin" start --id "$task_id" --name "$task_name" >/dev/null
+
+finished=0
+heartbeat() {
+    while :; do
+        sleep "$heartbeat_seconds"
+        [[ "$finished" == 0 ]] || return
+        "$trafficlight_bin" heartbeat --id "$task_id" >/dev/null 2>&1 || true
+    done
+}
+heartbeat &
+heartbeat_pid=$!
+
+finish() {
+    local result="$1"
+    finished=1
+    kill "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+    "$trafficlight_bin" done --id "$task_id" --result "$result" >/dev/null || true
+}
+
+child_pid=""
+interrupt() {
+    [[ -z "$child_pid" ]] || kill -TERM "$child_pid" 2>/dev/null || true
+    finish fail
+    exit 130
+}
+trap interrupt INT TERM HUP
+
+"$@" &
+child_pid=$!
+set +e
+wait "$child_pid"
+exit_code=$?
+set -e
+if [[ "$exit_code" == 0 ]]; then
+    finish success
+else
+    finish fail
+fi
+exit "$exit_code"

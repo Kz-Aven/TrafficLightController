@@ -20,8 +20,8 @@ struct CompletionRecord {
 /// 红绿灯状态机。
 ///
 /// 状态推导规则（与 SKILL.md 保持一致）：
-/// - 有待确认的完成事件      → green（最后一个任务成功完成，结果待查看）
 /// - 有运行中的任务          → orange（工作中）
+/// - 有待确认的完成事件      → green（最后一个任务成功完成，结果待查看）
 /// - 否则                    → red（空闲）
 ///
 /// 超时规则：
@@ -46,8 +46,8 @@ final class StateEngine {
     var onDisplayStateChanged: ((DisplayState) -> Void)?
 
     var displayState: DisplayState {
-        if pendingCompletion != nil { return .green }
         if !tasks.isEmpty { return .orange }
+        if pendingCompletion != nil { return .green }
         return .red
     }
 
@@ -117,6 +117,8 @@ final class StateEngine {
         }
         let name = (request.name?.isEmpty == false) ? request.name! : "未命名任务"
         let now = Date()
+        // 新一轮工作开始即视为确认上一轮结果，避免旧绿灯掩盖当前的运行态。
+        pendingCompletion = nil
         if let idx = tasks.firstIndex(where: { $0.id == id }) {
             tasks[idx].name = name
             tasks[idx].lastHeartbeat = now

@@ -111,11 +111,29 @@ func parseArguments(_ args: [String]) throws -> ParsedCommand {
     return ParsedCommand(request: request, autoLaunch: autoLaunch)
 }
 
-/// 尝试通过 LaunchServices 启动 TrafficLight.app
+/// 尝试启动与 CLI 同包的 App；安装目录未被 LaunchServices 登记时仍可工作。
 func launchApp() {
+    let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    let bundledApp = executable
+        .deletingLastPathComponent() // Resources
+        .deletingLastPathComponent() // Contents
+        .deletingLastPathComponent() // TrafficLight.app
+    let appURL: URL?
+    if bundledApp.pathExtension == "app",
+       FileManager.default.fileExists(atPath: bundledApp.path) {
+        appURL = bundledApp
+    } else {
+        let candidates = [
+            URL(fileURLWithPath: "/Applications/TrafficLight.app"),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Applications/TrafficLight.app")
+        ]
+        appURL = candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-b", TLProtocol.bundleIdentifier]
+    process.arguments = appURL.map { [$0.path] } ?? ["-b", TLProtocol.bundleIdentifier]
     try? process.run()
 }
 
@@ -142,6 +160,7 @@ do {
 
 // App 未运行时自动启动并等待其就绪
 var response: TLResponse?
+var clientError: TLClient.ClientError?
 do {
     response = try TLClient.send(parsed.request)
 } catch TLClient.ClientError.serverNotRunning {
@@ -158,6 +177,12 @@ do {
             }
         }
     }
+    if response == nil {
+        clientError = .serverNotRunning
+    }
+} catch let error as TLClient.ClientError {
+    clientError = error
+    FileHandle.standardError.write(("错误：\(error)\n").data(using: .utf8)!)
 } catch {
     response = nil
     FileHandle.standardError.write(("错误：\(error)\n").data(using: .utf8)!)
@@ -169,10 +194,24 @@ if let response {
 }
 
 // 失败：JSON 走 stdout 供 Agent 解析，人话提示走 stderr
-print(TLJSON.encode(TLResponse.failure(
-    "TrafficLight App 未运行且自动启动失败",
-    error: "app-not-running")))
+let failure: TLResponse
+let isPermissionDenied: Bool
+if case .permissionDenied? = clientError {
+    isPermissionDenied = true
+} else {
+    isPermissionDenied = false
+}
+if isPermissionDenied {
+    failure = TLResponse.failure("当前进程无权连接 TrafficLight 的本地 socket",
+                                 error: "permission-denied")
+} else {
+    failure = TLResponse.failure("TrafficLight App 未运行且自动启动失败",
+                                 error: "app-not-running")
+}
+print(TLJSON.encode(failure))
 FileHandle.standardError.write((
-    "提示：请先安装并启动 TrafficLight.app（可运行 install.sh），或检查是否被系统拦截。\n"
+    isPermissionDenied
+        ? "提示：请从允许访问本地 socket 的宿主执行该命令。\n"
+        : "提示：请先安装并启动 TrafficLight.app（可运行 install.sh），或检查是否被系统拦截。\n"
 ).data(using: .utf8)!)
 exit(1)

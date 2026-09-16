@@ -183,17 +183,21 @@ public enum TLUnixSocket {
 public enum TLClient {
     /// socket 上是否已有 App 实例在监听
     public static func isServerRunning() -> Bool {
-        TLUnixSocket.connect(timeoutMS: 500) != nil
+        guard let fd = TLUnixSocket.connect(timeoutMS: 500) else { return false }
+        close(fd)
+        return true
     }
 
     public enum ClientError: Error, CustomStringConvertible {
         case serverNotRunning
+        case permissionDenied
         case timeout
         case badResponse
 
         public var description: String {
             switch self {
             case .serverNotRunning: return "TrafficLight App 未运行"
+            case .permissionDenied: return "当前进程无权连接 TrafficLight 的本地 socket"
             case .timeout: return "等待 TrafficLight App 响应超时"
             case .badResponse: return "TrafficLight App 返回了无法解析的数据"
             }
@@ -205,6 +209,9 @@ public enum TLClient {
                             connectTimeoutMS: Int32 = 1000,
                             responseTimeoutMS: Int32 = 5000) throws -> TLResponse {
         guard let fd = TLUnixSocket.connect(timeoutMS: connectTimeoutMS) else {
+            if errno == EPERM || errno == EACCES {
+                throw ClientError.permissionDenied
+            }
             throw ClientError.serverNotRunning
         }
         defer { close(fd) }

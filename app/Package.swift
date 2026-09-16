@@ -21,5 +21,10 @@ let package = Package(
             dependencies: ["TrafficLightCore"],
             path: "Sources/TrafficLightCLI"
         ),
+        .testTarget(
+            name: "TrafficLightTests",
+            dependencies: ["TrafficLight"],
+            path: "Tests/TrafficLightTests"
+        ),
     ]
 )
