@@ -1,27 +1,82 @@
 #!/usr/bin/env python3
-"""Codex Hook adapter for TrafficLightController.
+"""Report Codex Hook lifecycle events to TrafficLightController."""
 
-Reads a Codex Hook event from stdin and reports the matching turn lifecycle to
-the local TrafficLight CLI. Hook failures are intentionally ignored so a
-missing status-light app can never interrupt Codex.
-"""
-
+import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
+from secrets import token_hex
+
+
+def agent_name(event=None):
+    event_name = event.get("trafficlight_agent_name") if isinstance(event, dict) else None
+    return event_name or os.environ.get("TRAFFICLIGHT_AGENT_NAME", "Codex")
 
 
 def task_id(event):
     session_id = event.get("session_id", "unknown-session")
     turn_id = event.get("turn_id", "session")
-    agent = "".join(
-        character for character in os.environ.get("TRAFFICLIGHT_AGENT_NAME", "Codex").lower()
-        if character.isalnum() or character in "-_"
-    ) or "agent"
+    agent = "".join(character for character in agent_name(event).lower()
+                    if character.isalnum() or character in "-_") or "agent"
     return f"{agent}:{session_id}:{turn_id}"
+
+
+def keepalive_enabled(event):
+    if isinstance(event, dict) and "trafficlight_keepalive" in event:
+        return bool(event["trafficlight_keepalive"])
+    configured = os.environ.get("TRAFFICLIGHT_KEEPALIVE")
+    if configured is not None:
+        return configured not in {"0", "false", "False"}
+    return agent_name(event) == "Codex"
+
+
+def duration(name, default):
+    try:
+        return max(float(os.environ.get(name, default)), 0.01)
+    except ValueError:
+        return default
+
+
+def state_dir():
+    root = os.environ.get("TRAFFICLIGHT_HOOK_STATE_DIR")
+    path = Path(root) if root else Path(tempfile.gettempdir()) / "trafficlight-controller" / "codex"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def state_path(identifier):
+    digest = hashlib.sha256(identifier.encode()).hexdigest()
+    return state_dir() / f"{digest}.json"
+
+
+def read_record(path):
+    try:
+        with path.open() as file:
+            return json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def write_record(path, record):
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w") as file:
+        json.dump(record, file)
+    os.replace(temporary, path)
+
+
+def remove_record(path, token=None):
+    record = read_record(path)
+    if record and (token is None or record.get("token") == token):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def trafficlight(*arguments):
@@ -34,36 +89,121 @@ def trafficlight(*arguments):
     if binary is None:
         return
     try:
-        subprocess.run(
-            [binary, *arguments],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-            check=False,
-        )
+        subprocess.run([binary, *arguments], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=2, check=False)
     except (OSError, subprocess.SubprocessError):
         pass
 
 
-def main():
+def worker_alive(record):
     try:
-        event = json.load(sys.stdin)
-    except json.JSONDecodeError:
+        os.kill(int(record["pid"]), 0)
+        return True
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+
+
+def start_worker(identifier, session_id):
+    path = state_path(identifier)
+    record = read_record(path)
+    if record and worker_alive(record):
+        return
+    remove_record(path)
+
+    token = token_hex(12)
+    process = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--heartbeat-worker", identifier, token],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+    )
+    write_record(path, {"task_id": identifier, "session_id": session_id,
+                        "pid": process.pid, "token": token})
+
+
+def stop_worker(identifier):
+    path = state_path(identifier)
+    record = read_record(path)
+    remove_record(path)
+    if not record or not worker_alive(record):
+        return
+    try:
+        os.killpg(int(record["pid"]), signal.SIGTERM)
+    except OSError:
+        pass
+
+
+def session_records(session_id):
+    for path in state_dir().glob("*.json"):
+        record = read_record(path)
+        if record and record.get("session_id") == session_id:
+            yield record
+
+
+def finish(identifier, result):
+    stop_worker(identifier)
+    trafficlight("done", "--id", identifier, "--result", result)
+
+
+def finish_session(session_id, result):
+    for record in list(session_records(session_id)):
+        finish(record["task_id"], result)
+
+
+def heartbeat_worker(identifier, token):
+    path = state_path(identifier)
+    for _ in range(20):
+        record = read_record(path)
+        if record and record.get("token") == token and record.get("pid") == os.getpid():
+            break
+        time.sleep(0.05)
+    else:
         return
 
+    deadline = time.monotonic() + duration("TRAFFICLIGHT_KEEPALIVE_MAX_SECONDS", 1800)
+    interval = duration("TRAFFICLIGHT_KEEPALIVE_INTERVAL_SECONDS", 20)
+    while time.monotonic() < deadline:
+        record = read_record(path)
+        if not record or record.get("token") != token or record.get("pid") != os.getpid():
+            return
+        trafficlight("heartbeat", "--id", identifier)
+        time.sleep(interval)
+    remove_record(path, token)
+
+
+def handle_event(event):
     event_name = event.get("hook_event_name")
     identifier = task_id(event)
-    agent_name = os.environ.get("TRAFFICLIGHT_AGENT_NAME", "Codex")
+    session_id = event.get("session_id", "unknown-session")
 
     if event_name == "UserPromptSubmit":
-        trafficlight("start", "--id", identifier, "--name", agent_name)
+        trafficlight("start", "--id", identifier, "--name", agent_name(event))
+        if keepalive_enabled(event):
+            start_worker(identifier, session_id)
     elif event_name == "PostToolUse":
         trafficlight("heartbeat", "--id", identifier)
     elif event_name == "Stop":
-        trafficlight("done", "--id", identifier, "--result", "success")
-    elif event_name in {"Interrupt", "SessionEnd"}:
-        trafficlight("idle", "--reason", f"{agent_name} 任务已取消或会话已结束")
+        finish(identifier, "success")
+    elif event_name == "Interrupt":
+        if event.get("turn_id"):
+            finish(identifier, "fail")
+        else:
+            finish_session(session_id, "fail")
+    elif event_name == "SessionEnd":
+        finish_session(session_id, "fail")
+
+
+def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--heartbeat-worker":
+        heartbeat_worker(sys.argv[2], sys.argv[3])
+        return
+    try:
+        handle_event(json.load(sys.stdin))
+    except json.JSONDecodeError:
+        pass
 
 
 if __name__ == "__main__":

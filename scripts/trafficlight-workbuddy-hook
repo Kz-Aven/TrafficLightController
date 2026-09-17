@@ -2,6 +2,7 @@
 # WorkBuddy uses the same Hook input contract as CodeBuddy/Claude-compatible hooks.
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 export TRAFFICLIGHT_AGENT_NAME="WorkBuddy"
+export TRAFFICLIGHT_KEEPALIVE="0"
 
 if command -v trafficlight-codex-hook >/dev/null 2>&1; then
     exec trafficlight-codex-hook "$@"

@@ -124,7 +124,7 @@ Codex 是首选接入方式。安装命令中的 `--with-codex-hooks` 会在没�
 
 </details>
 
-用户提交消息时转橙；工具完成后刷新心跳；回合正常结束时转绿；中断或会话结束时回红。只有 `PostToolUse` 异步执行，以避免增加工具完成后的等待时间。
+用户提交消息时转橙，并启动独立保活器每 20 秒刷新心跳，因此网络重连、长时间推理或无工具调用不会让任务提前变红。工具完成后也会立即刷新心跳；回合正常结束时转绿；中断或会话结束时仅结束关联任务。只有 `PostToolUse` 异步执行，以避免增加工具完成后的等待时间。
 
 ## WorkBuddy 原生 Hook
 
@@ -185,7 +185,8 @@ idle / done(fail) / 超时 -> 红灯
 
 ```bash
 swift test --package-path app
-python3 -m unittest mcp/test_trafficlight_mcp.py
+python3 mcp/test_trafficlight_mcp.py
+python3 scripts/test_trafficlight_codex_hook.py
 ```
 
 ## 许可证
