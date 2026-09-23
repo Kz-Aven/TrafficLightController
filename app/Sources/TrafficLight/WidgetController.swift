@@ -10,7 +10,8 @@ final class WidgetController: NSObject, NSWindowDelegate {
 
     static let defaultScale: CGFloat = 1.0
     static let minScale: CGFloat = 0.5
-    static let maxScale: CGFloat = 2.5
+    static let maxScale: CGFloat = 4.8
+    static let scalePresets: [CGFloat] = [0.65, 1.0, 1.6, 3.2, 4.8]
 
     private let panel: TrafficPanel
     private let ledView: LEDView
@@ -208,16 +209,15 @@ final class WidgetController: NSObject, NSWindowDelegate {
     }
 
     func setScalePreset(_ preset: Int) {
-        // 0=小 1=中 2=大
-        scale = [0.65, 1.0, 1.6][min(max(preset, 0), 2)]
+        scale = Self.scalePresets[min(max(preset, 0), Self.scalePresets.count - 1)]
         applyFrame(keepingCenter: true)
         UserDefaults.standard.set(scale, forKey: Prefs.scale)
     }
 
     var scalePreset: Int {
-        if scale < 0.85 { return 0 }
-        if scale > 1.25 { return 2 }
-        return 1
+        Self.scalePresets.indices.min {
+            abs(Self.scalePresets[$0] - scale) < abs(Self.scalePresets[$1] - scale)
+        } ?? 1
     }
 
     func resetPosition() {

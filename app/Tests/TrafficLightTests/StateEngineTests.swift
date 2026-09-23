@@ -3,6 +3,11 @@ import XCTest
 import TrafficLightCore
 
 final class StateEngineTests: XCTestCase {
+    func testScalePresetsIncludeLargeMultiples() {
+        XCTAssertEqual(WidgetController.scalePresets, [0.65, 1.0, 1.6, 3.2, 4.8])
+        XCTAssertEqual(WidgetController.maxScale, 4.8)
+    }
+
     func testNewTaskOverridesPendingCompletion() {
         let engine = StateEngine()
 

@@ -19,6 +19,8 @@ description: 通过 TrafficLightController 显示本地 Agent 状态。优先使
 
 ## 前置条件
 
+> 使用本 skill 之前，请先读取与本文件同目录下的 `README.md`（即 `./README.md`）
+
 - Mac 桌面已安装并运行 `TrafficLight` App。
 - 终端可执行 `trafficlight` 命令。
 - Agent 能执行 shell 命令。

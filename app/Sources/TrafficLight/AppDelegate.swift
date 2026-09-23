@@ -207,7 +207,7 @@ extension AppDelegate: NSMenuDelegate {
         menu.addItem(toggle)
 
         let sizeMenu = NSMenu()
-        for (tag, title) in [(0, "小"), (1, "中"), (2, "大")] {
+        for (tag, title) in [(0, "小"), (1, "中"), (2, "大"), (3, "超大"), (4, "巨大")] {
             let item = NSMenuItem(title: title, action: #selector(sizeAction(_:)),
                                   keyEquivalent: "")
             item.target = self
