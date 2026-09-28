@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 HOOK = ROOT / "trafficlight-codex-hook"
+WORKBUDDY_HOOK = ROOT / "trafficlight-workbuddy-hook"
 
 
 class CodexHookTests(unittest.TestCase):
@@ -22,13 +23,18 @@ class CodexHookTests(unittest.TestCase):
         self.fake_cli = root / "trafficlight"
         self.fake_cli.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TRAFFICLIGHT_TEST_LOG\"\n")
         self.fake_cli.chmod(0o755)
+        self.hook_proxy = root / "trafficlight-codex-hook"
+        self.hook_proxy.write_text("#!/bin/sh\nexec python3 \"$TRAFFICLIGHT_CODEX_HOOK\" \"$@\"\n")
+        self.hook_proxy.chmod(0o755)
         self.environment = {
             **os.environ,
             "TRAFFICLIGHT_BIN": str(self.fake_cli),
+            "TRAFFICLIGHT_CODEX_HOOK": str(HOOK),
             "TRAFFICLIGHT_TEST_LOG": str(self.log),
             "TRAFFICLIGHT_HOOK_STATE_DIR": str(self.state),
             "TRAFFICLIGHT_KEEPALIVE_INTERVAL_SECONDS": "0.05",
             "TRAFFICLIGHT_KEEPALIVE_MAX_SECONDS": "5",
+            "PATH": f"{root}:{os.environ.get('PATH', '')}",
         }
 
     def tearDown(self):
@@ -37,6 +43,10 @@ class CodexHookTests(unittest.TestCase):
 
     def emit(self, event):
         subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event), text=True,
+                       env=self.environment, check=True, capture_output=True)
+
+    def emit_workbuddy(self, event):
+        subprocess.run(["sh", str(WORKBUDDY_HOOK)], input=json.dumps(event), text=True,
                        env=self.environment, check=True, capture_output=True)
 
     def commands(self):
@@ -73,6 +83,15 @@ class CodexHookTests(unittest.TestCase):
         records = [json.loads(path.read_text()) for path in self.state.glob("*.json")]
         self.assertEqual([second_id], [record["task_id"] for record in records])
         self.emit({**second, "hook_event_name": "Stop"})
+
+    def test_workbuddy_keeps_heartbeat_until_stop(self):
+        event = {"hook_event_name": "UserPromptSubmit", "session_id": "session-1", "turn_id": "turn-1"}
+        self.emit_workbuddy(event)
+        identifier = "workbuddy:session-1:turn-1"
+        self.wait_for(lambda: sum(command == f"heartbeat --id {identifier}" for command in self.commands()) >= 2)
+
+        self.emit_workbuddy({**event, "hook_event_name": "Stop"})
+        self.wait_for(lambda: f"done --id {identifier} --result success" in self.commands())
 
 
 if __name__ == "__main__":
